@@ -48,6 +48,7 @@ from graphify.extractors.fortran import _cpp_preprocess, extract_fortran  # noqa
 from graphify.extractors.go import _GO_PREDECLARED_FUNCS, extract_go  # noqa: F401
 from graphify.extractors.json_config import extract_json  # noqa: F401
 from graphify.extractors.commonlisp import extract_commonlisp  # noqa: F401
+from graphify.extractors.gdscript import extract_gdscript  # noqa: F401
 from graphify.extractors.markdown import extract_markdown, _MD_LINK_INDEX_CACHE  # noqa: F401
 from graphify.extractors.ocaml import extract_ocaml  # noqa: F401
 from graphify.extractors.pascal_forms import extract_delphi_form, extract_lazarus_form  # noqa: F401
@@ -5900,6 +5901,7 @@ _DISPATCH: dict[str, Any] = {
     ".tf": extract_terraform,
     ".tfvars": extract_terraform,
     ".hcl": extract_terraform,
+    ".gd": extract_gdscript,
     ".dm": extract_dm,
     ".dme": extract_dm,
     ".dmi": extract_dmi,
@@ -5929,6 +5931,7 @@ _EXTRA_FOR_EXTENSION = {
     ".tf": "terraform",
     ".tfvars": "terraform",
     ".hcl": "terraform",
+    ".gd": "gdscript",
     ".dm": "dm",
     ".dme": "dm",
     ".ml": "ocaml",

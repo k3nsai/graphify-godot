@@ -3382,6 +3382,21 @@ def _extract_generic(
                         walk(child, parent_class_nid)
             return
 
+        # GDScript: a bare `extends Base` at file scope means the script's
+        # implicit class subclasses Base. Anchor the inherits edge to the file
+        # node; nested classes are handled in the class-type block above.
+        if t == "extends_statement" and config.ts_module == "tree_sitter_gdscript":
+            _gd_base = None
+            for _gd_bc in node.children:
+                if _gd_bc.is_named and _gd_bc.type != "extends":
+                    _gd_base = _read_text(_gd_bc, source)
+                    break
+            if _gd_base:
+                _line = node.start_point[0] + 1
+                _gd_base_nid = ensure_named_node(_gd_base, _line)
+                add_edge(file_nid, _gd_base_nid, "inherits", node.start_point[0] + 1)
+            return
+
         # Class types
         if t in config.class_types:
             # Resolve class name
@@ -4013,6 +4028,23 @@ def _extract_generic(
                                     add_edge(class_nid, target_nid, "references",
                                              line, context="generic_arg")
 
+            # GDScript: `class X extends Base:` -- emit inherits from the nested
+            # class onto its base (the base name sits in a named child of the
+            # extends_statement, not in a field under tree-sitter 0.25.x).
+            if config.ts_module == "tree_sitter_gdscript":
+                for _gd_ext_child in node.children:
+                    if _gd_ext_child.type != "extends_statement":
+                        continue
+                    _gd_base = None
+                    for _gd_bc in _gd_ext_child.children:
+                        if _gd_bc.is_named and _gd_bc.type != "extends":
+                            _gd_base = _read_text(_gd_bc, source)
+                            break
+                    if _gd_base:
+                        _line = node.start_point[0] + 1
+                        _gd_base_nid = ensure_named_node(_gd_base, _line)
+                        add_edge(class_nid, _gd_base_nid, "inherits", _line)
+
             # Find body and recurse. Ruby pushes its scope segments so nested
             # declarations qualify against the enclosing module/class (#2302);
             # ruby_segments is empty for every other language.
@@ -4406,6 +4438,28 @@ def _extract_generic(
                     if target_nid != parent_class_nid:
                         add_edge(parent_class_nid, target_nid, "requires", line)
             return
+
+        if (config.ts_module == "tree_sitter_gdscript"
+                and t in ("variable_statement", "signal_statement")
+                and node.child_by_field_name("name") is not None):
+            # GDScript data declarations: `@export var health: int = 100`,
+            # `var speed := 3.0`, and `signal died`. Materialise each as an
+            # attribute node contained by the enclosing scope (class at class
+            # level, script file at top level) so exports/signals participate in
+            # the intra-code graph with a proper node + contains edge.
+            name_node = node.child_by_field_name("name")
+            line = node.start_point[0] + 1
+            var_name = _read_text(name_node, source)
+            scope_nid = parent_class_nid or file_nid
+            if var_name:
+                is_export = t == "variable_statement" and any(
+                    c.type == "annotations" for c in node.children
+                )
+                attr_nid = _make_id(scope_nid, var_name)
+                add_node(attr_nid, f".{var_name}", line, node_type="attribute",
+                         metadata={"is_export": is_export,
+                                   "kind": "signal" if t == "signal_statement" else "variable"})
+                add_edge(scope_nid, attr_nid, "contains", line)
 
         if (config.ts_module == "tree_sitter_cpp"
                 and t == "field_declaration"
@@ -5728,6 +5782,19 @@ def _extract_generic(
                         # god-node guard only catches an ambiguous match, not a
                         # unique-but-wrong one (#3078).
                         member_receiver = _ruby_const_full_name(recv, source) or None
+            elif config.ts_module == "tree_sitter_gdscript":
+                # GDScript call nodes carry no `function` field: the callee is
+                # the first named child (an identifier). Member calls like
+                # `obj.method()` / `Enemy.new()` parse as attribute_call whose
+                # first named child is the method name, so mark them member calls
+                # for cross-file resolution. The receiver is not exposed as a
+                # direct child in this grammar version, so they resolve by bare
+                # name via the shared resolver.
+                is_member_call = node.type == "attribute_call"
+                for child in node.children:
+                    if child.is_named and child.type != "arguments":
+                        callee_name = _read_text(child, source)
+                        break
             else:
                 # Generic: get callee from call_function_field (or constructor on new_expression)
                 func_node = node.child_by_field_name(config.call_function_field) if config.call_function_field else None
